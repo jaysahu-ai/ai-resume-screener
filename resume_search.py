@@ -47,7 +47,7 @@ class SimpleResumeSearch:
         elif extension in ['.docx','.doc']:
             return self.extract_text_from_docx(str(file_path))
         else:
-            with open(file_path,'r',encoding='urf-8') as f:
+            with open(file_path,'r',encoding='utf-8') as f:
                 return f.read()
     
     def extract_key_info_with_llm(self, resume_text):
@@ -324,10 +324,12 @@ class SimpleResumeSearch:
             print(f"\n{'#'*80}")
             print(f"RANK #{candidate['rank']}: {candidate['filename']}")
             print(f"{'#'*80}")
+            print(f"Name: {candidate.get('name', 'N/A')}")
+            print(f"Email: {candidate.get('email', 'N/A')}")
+            print(f"Phone: {candidate.get('phone', 'N/A')}")
             print(f"Final Score: {candidate['final_score']:.2f} (out of 1.00)")
             print(f"Resume ID: {candidate['resume_id']}")
             print(f"File Path: {candidate['filepath']}")
-
             print(f"\nDetailed Scores (out of 100):")
             for criterion, score in candidate['detailed_scores'].items():
                 bar_length = int(score / 5)  # Scale to 20 chars
@@ -345,22 +347,85 @@ class SimpleResumeSearch:
 
 # ========== Simple version - just use filename ==========
 
-def extract_contact_info_from_resume(resume_db, candidate):
-    """
-    Simple version: Extract name from filename
-    Skip LLM extraction to save time/cost
-    """
-    filename = candidate.get('filename', 'Unknown')
+    def enrich_with_contact_info(self, ranked_candidates):
+        """
+        Extract contact information for ranked candidates
+        
+        Args:
+            ranked_candidates: List from rank_candidates_with_llm()
+            
+        Returns:
+            List of candidates enriched with contact info (name, email, phone)
+        """
+        print(f"\nExtracting contact information for {len(ranked_candidates)} candidates...")
+        
+        enriched_candidates = []
+        
+        for i, candidate in enumerate(ranked_candidates, 1):
+            print(f"[{i}/{len(ranked_candidates)}] Processing {candidate['filename']}...", end=" ")
+            
+            # Get full resume text
+            filepath = candidate['filepath']
+            try:
+                full_text = self.extract_text(filepath)
+            except Exception as e:
+                print(f"Error reading file: {e}")
+                candidate['name'] = 'N/A'
+                candidate['email'] = 'N/A'
+                candidate['phone'] = 'N/A'
+                enriched_candidates.append(candidate)
+                continue
+            
+            # Extract contact info with LLM
+            prompt = f"""Extract contact information from this resume.
     
-    # Clean filename to get name
-    name = filename.replace('.pdf', '').replace('.docx', '').replace('.doc', '')
-    name = name.replace('_', ' ').replace('-', ' ').strip()
-    name = ' '.join(word.capitalize() for word in name.split())
+    Resume text:
+    {full_text[:2000]}
     
-    return {
-        **candidate,
-        'name': name,
-        'email': 'Contact info not extracted',
-        'phone': 'Contact info not extracted',
-        'current_role': 'See resume for details'
-    }
+    Return ONLY valid JSON:
+    {{
+      "name": "Full Name",
+      "email": "email@example.com or null",
+      "phone": "+919876543210 or null"
+    }}
+    """
+            
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=self.api_key)
+                
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=200,
+                    temperature=0
+                )
+                
+                result_text = response.choices[0].message.content.strip()
+                
+                # Clean JSON
+                import re
+                if result_text.startswith('```'):
+                    result_text = re.sub(r'^```json?\s*', '', result_text)
+                    result_text = re.sub(r'\s*```$', '', result_text)
+                
+                import json
+                contact_info = json.loads(result_text)
+                
+                # Add to candidate
+                candidate['name'] = contact_info.get('name') or 'N/A'
+                candidate['email'] = contact_info.get('email') or 'N/A'
+                candidate['phone'] = contact_info.get('phone') or 'N/A'
+                
+                print(f"✓ {candidate['name']}")
+                
+            except Exception as e:
+                print(f"✗ Extraction failed: {e}")
+                candidate['name'] = 'N/A'
+                candidate['email'] = 'N/A'
+                candidate['phone'] = 'N/A'
+            
+            enriched_candidates.append(candidate)
+        
+        print(f"\n✓ Contact extraction complete\n")
+        return enriched_candidates

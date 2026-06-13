@@ -29,3 +29,9 @@ An intelligent resume screening system that uses AI to rank candidates based on 
 
 1. Clone the repository:
 ```bash
+git clone git clone https://github.com/jaysahu-ai/ai-resume-screener
+cd ai-resume-screener
+
+python3 -m venv venv
+source venv/bin/activate
+```
